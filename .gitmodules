@@ -1,0 +1,9 @@
+[submodule "deps/boto"]
+	path = deps/boto
+	url = git://github.com/boto/boto.git
+[submodule "deps/virtualenv"]
+	path = deps/virtualenv
+	url = https://github.com/pypa/virtualenv.git
+[submodule "deps/django"]
+	path = deps/django
+	url = https://github.com/django/django.git
