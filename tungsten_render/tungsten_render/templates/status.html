@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block contents %}
+{% if not item %}
+    Waiting for render.  Refresh page in a few seconds
+{% else %}
+    <h2>Status for {{ item.uid }}</h2>
+
+    {% if item.message.name %}
+    Render name: {{ item.message.name }}<br/>
+    {% endif %}
+    {% if item.commit %}
+    Rendered with commit <a href="https://github.com/tunabrain/tungsten/commit/{{item.commit}}">{{item.commit}}</a><br/>
+    {% endif %}
+
+    {% if item.status == 'submitted' %}
+    Render has been submitted and it waiting for resources
+    {% elif item.status == 'error' %}
+    Render has failed!
+    <pre> {{item.err_msg}} </pre>
+    {% elif item.status == 'inprogress' %}
+    Render is in progress! <br/>
+    {% if item.thumb %}
+        Here is a preview of your scene:<br/>
+        <img src="{% url 'get_thumb' item.uid %}" class="thumbnail"/><br/>
+    {% endif %}
+
+    {% elif item.status == 'done' %}
+    Render is done!  Click the thumbnail to view the final result:<br/>
+    <a href="{% url 'get_render' item.uid %}"><img src="{% url 'get_thumb' item.uid %}" class="thumbnail"></a>
+    {%endif%}
+
+    <div>
+        If you want you change a render parameters (like spp, resolution, or commit), then click below:<br/>
+        <a class="btn btn-default" href="{% url 'render' %}?resubmit={{item.uid}}">
+            <i class="glyphicon glyphicon-repeat"></i>
+            Resubmit
+        </a>
+
+    </div>
+
+{% endif %}
+
+{% endblock %}

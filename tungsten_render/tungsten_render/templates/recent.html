@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block contents %}
+<table class="table">
+{% for render in renders %}
+<tr>
+    <td>{%if render.thumb %}
+            {%if render.status == 'done' %}
+            <a href="{% url 'get_render' uid=render.uid %}">
+                <img src="{% url 'get_thumb' uid=render.uid %}"/>
+            </a>
+            {% else %}
+                <img src="{% url 'get_thumb' uid=render.uid %}"/>
+            {% endif %}
+        {%endif%}</td>
+    <td>
+        {%if render.status == 'done' %}<i class="glyphicon glyphicon-ok"></i>
+        {%elif render.status == 'error' %}<i class="glyphicon glyphicon-ok"></i>
+        {%endif%}
+    </td>
+    <td><a href="{% url 'get_render_status' uid=render.uid %}">{{render.uid}}</a></td>
+</tr>
+{% endfor %}
+</table>
+
+{% endblock %}
