@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% load staticfiles %}
+{% block head %}
+        <script src="{% static "tungsten_render/jquery.fileupload.js" %}"></script>
+        <link rel="stylesheet" href="{% static "tungsten_render/jquery.fileupload.css" %}">
+
+        <script>
+        var uploadButton = $('<button/>')
+            .addClass('btn btn-primary')
+            .text('Upload and start render')
+            .on('click', function() {
+                $(this).data().submit();
+                $(this).text("Please wait...");
+            });
+            $(function() {
+                $("#fileupload").fileupload({
+                    'paramName': 'data',
+                    'autoUpload': false,
+                    'formData': function() {
+                        return $("form").serializeArray();
+                    },
+                    'done': function(e, data) {
+                        window.location.href="/render/" + data.result.uid + "/status";
+                    }
+                }).on('fileuploadadd', function (e, data) {
+                    console.log(data);
+                    $("#files").empty();
+                    data.context = $("<div/>").appendTo('#files');
+                    $("<span />").text(data.files[0].name).appendTo(data.context);
+                    uploadButton.clone(true).data(data).appendTo(data.context);
+                }).on('fileuploadprogress', function (e, data) {
+                    var progress = parseInt(data.loaded / data.total * 100, 10);
+                    $('#progress .progress-bar').css(
+                        'width',
+                        progress + '%'
+                    );
+                });
+
+
+
+            });
+        </script>
+{% endblock %}
+
+{% block contents %}
+<div class="page-header">
+{% if not resubmit %}
+    <h1>Submit new render</h1>
+{% else %}
+    <h1>Resumit</h1>
+    Resubmit render <a href="{% url 'get_render_status' uid=resubmit %}">{{resubmit}}</a>
+{% endif %}
+</div>
+<form method="POST">
+    <div class="row">
+        <div class="col-md-2">Help text goes here"</div>
+        <div class="col-md-10">
+
+            <div class="input-group">
+                <span class="input-group-addon" id="basic-addon1">Name/Label</span>
+                <input class="form-control" type="text" name="name" aria-describedby="basic-addon1" {% if resubmit %} value="{{old_item.message.name}}"{%endif%}/>
+            </div>
+            <div class="input-group">
+                <span class="input-group-addon" id="basic-addon3">Render thumbnail</span>
+                <input class="form-control" aria-describedby="basic-addon3" type="checkbox" checked="1" name="thumb"/><br/>
+            </div>
+            <div class="input-group">
+                <span class="input-group-addon" id="basic-addon2">Samples per pixel</span>
+
+                <input class="form-control" aria-describedby="basic-addon2" type="number" name="spp" min="1" max="256" {% if resubmit %} value="{{old_item.message.spp}}"{%endif%}/><br/>
+            </div>
+            <div class="input-group">
+                <span class="input-group-addon" id="basic-addon4">Resolution</span>
+                <input class="form-control" aria-describedby="basic-addon4" type=text" name="resolution" {% if resubmit %} value="{{old_item.message.resolution}}"{%endif%}/><br/>
+            </div>
+
+            <div class="input-group">
+                <span class="input-group-addon" id="basic-addon5">Commit</span>
+                <select class="form-control" aria-describedby="basic-addon5" name="commit">
+                    <option value="LATEST" {%if resubmit and old_item.message.commit == "LATEST"%}selected{%endif%}>Latest</option>
+                    <option value="ANY" {%if resubmit and old_item.message.commit == "ANY"%}selected{%endif%}>Any</option>
+                    {% for commit in commits %}
+                    <option value="{{commit.oid.hex}}" {%if resubmit and old_item.message.commit == commit.oid.hex%}selected{%endif%}>{{commit.oid.hex|slice:":8"}} -- {{commit.message}}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>  <!-- end class="col-md-10" -->
+
+    </div><!-- end class="row" -->
+
+    {% if resubmit %}
+    <br/>
+    <button class="btn btn-primary" type="submit">Render</button>
+    {% endif %}
+
+</form>
+                </p>
+
+{% if not resubmit %}
+                    <span class="btn btn-success fileinput-button">
+                        <i class="glyphicon glyphicon-plus"></i>
+                        <span id="selectfiles">Select files...</span>
+                        <!-- The file input field used as target for the file upload widget -->
+                        <input id="fileupload" type="file">
+                    </span>
+                    <br />
+                    <br />
+                    <div id="progress" class="progress">
+                        <div class="progress-bar progress-bar-success"></div>
+                    </div>
+                    <div id="files" class="files"></div>
+{% else %}
+<i>The scene you uploaded previously will be reused</i>
+{% if old_item.thumb %}
+<img src="{% url 'get_thumb' old_item.uid %}"/>
+{% endif %}
+{% endif %}
+{% endblock %}
