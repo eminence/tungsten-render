@@ -264,10 +264,11 @@ class RenderManager(object):
                     item['finished'] = time.time()
                     item.partial_save()
 
+                self.last_render = datetime.datetime.now(pytz.utc)
             if self.sleep():
                 break
 
-    print("Done working!")
+        print("Done working!")
 
 if __name__ == "__main__":
     mgr = RenderManager()
