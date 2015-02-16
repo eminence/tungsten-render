@@ -5,10 +5,12 @@ if [ -z "$VIRTUAL_ENV" ]; then
 	exit 1
 fi
 
+pip install pytz
+
 ROOTDIR="$(dirname "$(readlink -fn "$0")")"
 
 git submodule init
-sub submodule update
+git submodule update
 echo $ROOTDIR
 
 rm -rf $ROOTDIR/build
