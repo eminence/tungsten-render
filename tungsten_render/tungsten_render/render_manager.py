@@ -19,6 +19,7 @@ import pytz
 import boto
 import boto.sqs
 import boto.ec2
+import boto.sns
 from boto.s3.key import Key
 from boto.dynamodb2.table import Table
 from boto.dynamodb2.exceptions import ItemNotFound
@@ -33,6 +34,7 @@ class RenderManager(object):
         self.sqs_conn = boto.sqs.connect_to_region("us-east-1")
         self.s3_conn = boto.connect_s3()
         self.ec2_conn = boto.ec2.connect_to_region("us-east-1")
+        self.sns_conn = boto.sns.connect_to_region("us-east-1")
 
         self.q = self.sqs_conn.get_queue("tungsten_render")
         self.s3_bucket = self.s3_conn.get_bucket("tungsten-render")
@@ -90,6 +92,16 @@ class RenderManager(object):
 
             since_last_render = now - self.last_render
             print("It's been %r seconds since last render" % since_last_render.total_seconds()) 
+            if since_last_render.total_seconds() > 1500: # 25 minutes 
+                remainder = running.total_seconds() % 3600.0
+                print("Remainder: %r" % remainder)
+                if remainder > 2700:
+                    print("Need to shut down this instance!")
+                    iid = self.instance_metadata['instance-id']
+                    self.sns_conn.publish("arn:aws:sns:us-east-1:324620253032:tungsten-ec2", subject="Shutting down " + iid, 
+                        message="Shutting down this instance, since it's not processed a job in a while")
+                    self.ec2_conn.stop_instances(instance_ids=[iid])
+                    return True
             time.sleep(15)
 
     def run(self):
@@ -252,8 +264,10 @@ class RenderManager(object):
                     item['finished'] = time.time()
                     item.partial_save()
 
-            self.sleep()
+            if self.sleep():
+                break
 
+    print("Done working!")
 
 if __name__ == "__main__":
     mgr = RenderManager()
