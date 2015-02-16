@@ -78,6 +78,7 @@ class RenderManager(object):
                 item = self.table.get_item(uid=uid)
             except ItemNotFound:
                 item = None
+        return item
 
     def sleep(self):
         if not self.is_ec2:
@@ -115,8 +116,9 @@ class RenderManager(object):
 
                 spp = data.get('spp', 64)
                 thumb = data.get('thumb')
-                self.uploaded_scene_doc = data.get("scene_doc")
+                uploaded_scene_doc = data.get("scene_doc")
                 commit = data.get('commit')
+                resolution = data.get('resolution')
 
                 item['status'] = 'building'
                 item.partial_save()
@@ -184,7 +186,11 @@ class RenderManager(object):
 
                     # delete the message so no other worker will get it
                     self.q.delete_message(msg)
-                        
+                    
+                    if resolution is not None:
+                        scene_data['camera']['resolution'] = resolution
+
+
                     # if resolution is not specified:
                     if "resolution" not in scene_data['camera']:
                         res = [1000, 563] # the tungsten default
