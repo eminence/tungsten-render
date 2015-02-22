@@ -23,14 +23,41 @@ import boto.sns
 from boto.s3.key import Key
 from boto.dynamodb2.table import Table
 from boto.dynamodb2.exceptions import ItemNotFound
-from boto.utils import get_instance_metadata
+from boto.utils import get_instance_metadata, get_instance_userdata
 
 
 from manager_settings import *
 from build_manager import BuildManager
 
+ENC_ACCESS_KEY = b'\x9a\x98\x18\x16P\xdetGu@\xcd\xfb\xd1Iv\x83\x89\x8b?\x1d\xf3\xdd\x96M\xb9\x8b\xb5\x18\xba\xec\x99\x0f\xae\xeb\x84c'
+ENC_SECRET_KEY = b'\xe9\xc5KJ\x94\xe7\x92\xb5`U\x1at\xf5\x8e\xd7~p\xf9\xa5\xc6\x98\x8bT\x0e*\xfe\x08\xe1\x86\x14\xa8\xaa\x83\x93\x8d\x98\x80\xa0\xf0\x88A\xf5G+(T\xa93T\x03\x87\xbd[x\xfc\x7f'
+
 class RenderManager(object):
+
     def __init__(self):
+        if not ("AWS_ACCESS_KEY_ID" in os.environ and "AWS_SECRET_ACCESS_KEY" in os.environ):
+            # try to decrypt AWS credentials via key in userdata
+            for line in get_instance_userdata().splitlines():
+                if "AWSSECRET=" in line:
+                    secret = line.strip().split("=")[1]
+                    break
+            else:
+                raise Exception("Please set your AWS credentials!")
+            from Crypto.Cipher import AES
+            from Crypto import Random
+            from hashlib import md5
+
+            key = md5(secret.encode()).digest()
+            iv = ENC_ACCESS_KEY[0:AES.block_size]
+            cipher = AES.new(key, AES.MODE_CFB, iv)
+            os.environ['AWS_ACCESS_KEY_ID'] = cipher.decrypt(ENC_ACCESS_KEY[AES.block_size:]).decode()
+            
+            iv = ENC_SECRET_KEY[0:AES.block_size]
+            cipher = AES.new(key, AES.MODE_CFB, iv)
+            os.environ['AWS_SECRET_ACCESS_KEY'] = cipher.decrypt(ENC_SECRET_KEY[AES.block_size:]).decode()
+            
+            
+
         self.sqs_conn = boto.sqs.connect_to_region("us-east-1")
         self.s3_conn = boto.connect_s3()
         self.ec2_conn = boto.ec2.connect_to_region("us-east-1")
