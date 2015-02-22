@@ -5,7 +5,7 @@ if [ -z "$VIRTUAL_ENV" ]; then
 	exit 1
 fi
 
-pip install pytz
+pip install pytz boto
 
 ROOTDIR="$(dirname "$(readlink -fn "$0")")"
 

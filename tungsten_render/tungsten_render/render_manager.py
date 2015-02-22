@@ -10,6 +10,7 @@ import uuid
 import shutil
 import traceback
 from urllib.request import urlopen
+from urllib.error import HTTPError
 import datetime
 from pprint import pprint
 from io import BytesIO
@@ -62,10 +63,19 @@ class RenderManager(object):
 
         self.last_render = datetime.datetime.now(pytz.utc)
 
-    def upload_to_s3(self, key, file_name):
+    def upload_to_s3(self, key, file_name=None, file=None):
+        if file_name is None and file is None:
+            raise Exception("")
+        if file_name is not None:
+            if not os.path.exists(file_name):
+                raise Exception("File not found!")
         pngkey = Key(self.s3_bucket)
         pngkey.key = key
-        pngkey.set_contents_from_filename(file_name)
+        if file_name is not None:
+            pngkey.set_contents_from_filename(file_name)
+        else:
+            pngkey.set_contents_from_file(file)
+
         pngkey.set_acl('public-read')
 
     def get_db_item(self, uid):
@@ -131,6 +141,7 @@ class RenderManager(object):
                 uploaded_scene_doc = data.get("scene_doc")
                 commit = data.get('commit')
                 resolution = data.get('resolution')
+                resubmit = data.get('resubmit')
 
                 item['status'] = 'building'
                 item.partial_save()
@@ -211,11 +222,12 @@ class RenderManager(object):
 
                     # if thumb is set, render a small thumbnail that less than 128px
                     # with a fixed spp of 32
+                    # note thumbnails never use the resume info
                     if thumb:
                         output_file = os.path.join(work_dir, "thumb.png")
-                        scene_data['camera']['output_file'] = output_file
-                        scene_data['camera']['overwrite_output_files'] = True
-                        scene_data['camera']['spp'] = 32
+                        scene_data['renderer']['output_file'] = output_file
+                        scene_data['renderer']['overwrite_output_files'] = True
+                        scene_data['renderer']['spp'] = 32
 
                         factor = max(res)/128.0
                         nres = [int(res[0]/factor), int(res[1]/factor)]
@@ -226,32 +238,93 @@ class RenderManager(object):
                         
                         scene_data['camera']['resolution'] = res # reset to original
                         
-                        p = subprocess.Popen([exe, 
+                        p = subprocess.Popen([exe, "--restart",
                             final_scene_file], cwd=work_dir)
                         p.wait()
 
-                        self.upload_to_s3(uid + ".thumb.png", output_file)
+                        self.upload_to_s3(uid + ".thumb.png", file_name=output_file)
                         
                         item['thumb'] = 'thumb.png'
                         item.partial_save()
 
 
+                    if resubmit:
+                        old_resume_dat = "https://s3.amazonaws.com/tungsten-render/" + resubmit + ".resume.dat"
+                        old_resume_json = "https://s3.amazonaws.com/tungsten-render/" + resubmit + ".resume.json"
+                        resume_dat = os.path.join(work_dir, uid + ".resume.dat")
+                        resume_json = os.path.join(work_dir, uid + ".resume.json")
+                        try:
+                            handle = urlopen(old_resume_dat)
+                            shutil.copyfileobj(handle, open(resume_dat, "w+b"))
+                            handle = urlopen(old_resume_json)
+                            shutil.copyfileobj(handle, open(resume_json, "w+b"))
+                        except HTTPError:
+                            print("Failed to download resume information!")
+
                     output_file = os.path.join(work_dir, "output.png")
 
                     # modify the scene document to specify our own output file
-                    scene_data['camera']['output_file'] = output_file
-                    scene_data['camera']['overwrite_output_files'] = True
+                    scene_data['renderer']['output_file'] = output_file
+                    scene_data['renderer']['overwrite_output_files'] = True
+                    scene_data['renderer']['enable_resume_render'] = True
+                    scene_data['renderer']['resume_render_prefix'] = uid + ".resume"
+                    scene_data['renderer']['checkpoint_interval'] = 5
                     if spp is not None:
-                        scene_data['camera']['spp'] = spp
+                        scene_data['renderer']['spp'] = spp
 
                     final_scene_file = os.path.join(work_dir, uid) + ".json"
                     json.dump(scene_data, open(final_scene_file, "w"))
+                    logfile = os.path.join(work_dir, "render.log")
 
-                    p = subprocess.Popen([exe, 
+                    restart_dat = os.path.join(work_dir, uid + ".resume.dat")
+                    restart_json = os.path.join(work_dir, uid + ".resume.json")
+
+                    p = subprocess.Popen([exe+"_server", "-p", "12345", "-l", logfile,
                         final_scene_file], cwd=work_dir)
+                    render_start_time = time.time()
+                    last_status_check = render_start_time
+                    last_framegrab_time = render_start_time
+                    last_checkpoint_time = render_start_time
+                    while p.poll() is None:
+                        time.sleep(5)
+                        now = time.time()
+                        if now - last_status_check > 30.0:
+                            render_status = json.loads(urlopen("http://localhost:12345/status").read().decode())
+                            item["render_status"] = render_status
+                            item.partial_save()
+                            last_status_check = now
+                        if now - last_framegrab_time > 180:
+                            with open(os.path.join(work_dir, "preview.png"), "wb") as fobj:
+                                shutil.copyfileobj(urlopen("http://localhost:12345/render"), fobj)
+                            self.upload_to_s3(uid + ".preview.png", file_name=os.path.join(work_dir, "preview.png"))
+                            item["preview"] = "preview.png"
+                            item.partial_save()
+                            last_framegrab_time = now
+                            print("Uploaded frame to s3")
+                        if now - last_checkpoint_time > 360:
+                            if os.path.exists(restart_dat) and os.path.exists(restart_json):
+                                self.upload_to_s3(uid + ".resume.dat", file_name=restart_dat)
+                                self.upload_to_s3(uid + ".resume.json", file_name=restart_json)
+                                print("Uploaded resume data")
+                            last_checkpoint_time = now
+
+
                     p.wait()
 
-                    self.upload_to_s3(uid + ".png", output_file)
+                    if os.path.exists(output_file):
+                        self.upload_to_s3(uid + ".png", file_name=output_file)
+                    else:
+                        item['status'] = 'error'
+                        item['err_msg'] = open(logfile).read()
+                        item.partial_save()
+                        continue
+
+
+                    if os.path.exists(restart_dat) and os.path.exists(restart_json):
+                        self.upload_to_s3(uid + ".resume.dat", file_name=restart_dat)
+                        self.upload_to_s3(uid + ".resume.json", file_name=restart_json)
+
+
 
                     shutil.rmtree(work_dir)
                     item['status'] = 'done'
