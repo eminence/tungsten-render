@@ -14,6 +14,7 @@ from urllib.error import HTTPError
 import datetime
 from pprint import pprint
 from io import BytesIO
+from decimal import Decimal
 
 import pytz
 
@@ -308,35 +309,52 @@ class RenderManager(object):
 
                     p = subprocess.Popen([exe+"_server", "-p", "12345", "-l", logfile,
                         final_scene_file], cwd=work_dir)
+                    print("tungsten_server started with pid %d" % p.pid)
                     render_start_time = time.time()
+                    item['render_start_time'] = Decimal(str(time.time()))
+                    item.partial_save()
                     last_status_check = render_start_time
                     last_framegrab_time = render_start_time
                     last_checkpoint_time = render_start_time
                     while p.poll() is None:
                         time.sleep(5)
                         now = time.time()
-                        if now - last_status_check > 30.0:
-                            render_status = json.loads(urlopen("http://localhost:12345/status").read().decode())
-                            item["render_status"] = render_status
-                            item.partial_save()
-                            last_status_check = now
-                        if now - last_framegrab_time > 180:
-                            with open(os.path.join(work_dir, "preview.png"), "wb") as fobj:
-                                shutil.copyfileobj(urlopen("http://localhost:12345/render"), fobj)
-                            self.upload_to_s3(uid + ".preview.png", file_name=os.path.join(work_dir, "preview.png"))
-                            item["preview"] = "preview.png"
-                            item.partial_save()
-                            last_framegrab_time = now
-                            print("Uploaded frame to s3")
-                        if now - last_checkpoint_time > 360:
-                            if os.path.exists(restart_dat) and os.path.exists(restart_json):
-                                self.upload_to_s3(uid + ".resume.dat", file_name=restart_dat)
-                                self.upload_to_s3(uid + ".resume.json", file_name=restart_json)
-                                print("Uploaded resume data")
-                            last_checkpoint_time = now
+                        try:
+                            if now - last_status_check > 30.0:
+                                render_status = json.loads(urlopen("http://localhost:12345/status").read().decode())
+                                item["render_status"] = render_status
+                                rate = float(render_status['current_spp']) / (now - render_start_time) # in samples per second
+                                if rate > 0.0:
+                                    est_done_time = render_start_time + (float(render_status['total_spp']) / rate)
+                                    item['spprate'] = Decimal(str(rate))
+                                    item['est_done_time'] = Decimal(str(est_done_time))
+                                item.partial_save()
+                                last_status_check = now
+                            if now - last_framegrab_time > 180:
+                                with open(os.path.join(work_dir, "preview.png"), "wb") as fobj:
+                                    shutil.copyfileobj(urlopen("http://localhost:12345/render"), fobj)
+                                self.upload_to_s3(uid + ".preview.png", file_name=os.path.join(work_dir, "preview.png"))
+                                item["preview"] = "preview.png"
+                                item.partial_save()
+                                last_framegrab_time = now
+                                print("Uploaded frame to s3")
+                            if now - last_checkpoint_time > 600:
+                                if os.path.exists(restart_dat) and os.path.exists(restart_json):
+                                    self.upload_to_s3(uid + ".resume.dat", file_name=restart_dat)
+                                    self.upload_to_s3(uid + ".resume.json", file_name=restart_json)
+                                    print("Uploaded resume data")
+                                last_checkpoint_time = now
+                        except HTTPError as ex:
+                            traceback.print_exc()
+                            # we might fail to urlopen if the render has finished
+                            if p.poll() is None: # still running? this is a real error
+                                print("renderer is still running! but had HTTPError")
+                                raise ex
 
 
-                    p.wait()
+                    if p.wait() != 0:
+                        print("Bad error code! %r" % p.returncode)
+
 
                     if os.path.exists(output_file):
                         self.upload_to_s3(uid + ".png", file_name=output_file)
@@ -355,13 +373,13 @@ class RenderManager(object):
 
                     shutil.rmtree(work_dir)
                     item['status'] = 'done'
-                    item['finished'] = time.time()
+                    item['finished'] = Decimal(str(time.time()))
                     item.partial_save()
                     print("Result uploaded and work_dir deleted")
                 except Exception:
                     traceback.print_exc()
                     item['status'] = 'error'
-                    item['finished'] = time.time()
+                    item['finished'] = Decimal(str(time.time()))
                     item.partial_save()
 
                 self.last_render = datetime.datetime.now(pytz.utc)

@@ -5,7 +5,7 @@ if [ -z "$VIRTUAL_ENV" ]; then
 	exit 1
 fi
 
-pip install pytz boto
+pip install pytz pycrypto
 
 ROOTDIR="$(dirname "$(readlink -fn "$0")")"
 
@@ -25,3 +25,7 @@ cd $ROOTDIR/pygit2
 export CFLAGS="-I$VIRTUAL_ENV/include $CFLAGS"
 export LDFLAGS="-L$VIRTUAL_ENV/lib -Wl,-rpath='$VIRTUAL_ENV/lib',--enable-new-dtags $LDFLAGS"
 python setup.py build install
+
+cd $ROOTDIR/boto
+python setup.py build install
+
