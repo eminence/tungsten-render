@@ -12,6 +12,7 @@ import zipfile
 import time
 from datetime import datetime
 import pygit2
+import pytz
 
 # Create your views here.
 import boto
@@ -52,7 +53,14 @@ def post_render(request):
         print("Fetched latest code from github")
 
         latest = repo.lookup_branch("origin/master", pygit2.GIT_BRANCH_REMOTE).target
-        commits = [x for i,x in enumerate(repo.walk(latest, pygit2.GIT_SORT_TOPOLOGICAL)) if i < 20]
+        commits = []
+        for i,commit in enumerate(repo.walk(latest, pygit2.GIT_SORT_TOPOLOGICAL)):
+            if i >= 20:
+                break
+            if commit.oid.hex == '0bdb297ef067f782130793682e2a255b4e61f639':
+                commits.append(commit)
+                break
+            commits.append(commit)
 
         resubmit = request.GET.get("resubmit")
 
@@ -106,8 +114,10 @@ def post_render(request):
         m = Message()
         body = {"uid": uid.hex,"thumb": thumb, "commit": commit,
             "scene_doc": scene_doc}
+        if resubmit:
+            body['resubmit'] = resubmit
         if spp:
-            body['spp'] = min(256, int(spp))
+            body['spp'] = min(2048, int(spp))
         else:
             body['spp'] = 256
         if rendername:
@@ -130,16 +140,86 @@ def post_render(request):
 
 
 
+    return HttpResponseRedirect(reverse("get_render_status", kwargs={"uid": uid.hex}))
     resp = JsonResponse({"status": "queued", "uid": uid.hex})
     resp['Location'] = reverse("get_render_status", kwargs={"uid": uid.hex})
     return resp
-    #return HttpResponseRedirect(reverse("get_render_status", kwargs={"uid": uid.hex}))
+
+def bootstrap(request):
+    "A script that will run the very first time an EC2 instances is started"
+    script="""#!/bin/bash
+apt-get update
+apt-get -q -y install vim tmux python3 python3-dev git cmake make g++ gcc libffi-dev libssl-dev
+
+
+update-rc.d -f tungsten remove
+
+curl http://do.em32.net:8081/render/startup.sh > /etc/init.d/tungsten
+chmod +x /etc/init.d/tungsten
+
+update-rc.d tungsten start 99 5 . stop 99 1 2 3 4 6 .
+/etc/init.d/tungsten start
+
+
+"""
+    return HttpResponse(script)
+
+def startup(request):
+    "A script that will be installed by bootstrap.sh to be run at every boot"
+    script="""#!/bin/bash
+
+#!/bin/sh
+
+### BEGIN INIT INFO
+# Provides:          screen-cleanup
+# Required-Start:    $remote_fs
+# Required-Stop:     $remote_fs
+# Default-Start:     5
+# Default-Stop:      1 2 3 4 6
+# Short-Description: Tungsten render service
+# Description: Tungsten render service
+### END INIT INFO
+
+
+case "$1" in
+start)
+    sudo -u ubuntu tmux new-session -d '/etc/init.d/tungsten render'
+    ;;
+render)
+    cd
+    if ! [ -e tungsten-render ]; then
+        git clone https://github.com/eminence/tungsten-render.git
+    fi
+    cd tungsten-render
+    git submodule init
+    git submodule update --depth 1
+    if ! [ -e venv ]; then
+        python3 deps/virtualenv/virtualenv.py venv
+    fi
+    source venv/bin/activate
+    ./deps/build_deps.sh
+    python tungsten_render/tungsten_render/render_manager.py
+    echo "Dropping into bash shell"
+    bash
+
+
+    ;;
+stop|restart|reload|force-reload)
+    ;;
+esac
+        
+
+"""
+    return HttpResponse(script)
 
 def get_render(request, uid):
     return HttpResponseRedirect("https://s3.amazonaws.com/tungsten-render/" + uid + ".png")
 
 def get_thumb(request, uid):
     return HttpResponseRedirect("https://s3.amazonaws.com/tungsten-render/" + uid + ".thumb.png")
+
+def get_preview(request, uid):
+    return HttpResponseRedirect("https://s3.amazonaws.com/tungsten-render/" + uid + ".preview.png")
 
 def get_scene_doc(request, uid):
     pass
@@ -156,15 +236,23 @@ def get_render_status(request, uid):
         "navpage": "status",
         "created": item['created'],
         "status": item['status'],
+        "item": item,
         }
     d['thumb'] = "https://s3.amazonaws.com/tungsten-render/" + uid + ".thumb.png"
     d['render'] = "https://s3.amazonaws.com/tungsten-render/" + uid + ".png"
+    if 'spprate' in item:
+        d['progress'] = int(100.0 * float(item['render_status']['current_spp']) / float(item['render_status']['total_spp']))
+        d['spprate'] = item['spprate']
+        d['eta'] = pytz.utc.localize(datetime.utcfromtimestamp(float(item['est_done_time'])))
+        d['now'] = pytz.utc.localize(datetime.utcnow())
 
-    return render(request, "status.html", context)
+        
+
+    return render(request, "status.html", d)
 
 
 def recent_renders(request):
-    week = 60*60*24
+    week = 60*60*24*7
     renders = table.scan(created__gt=int(time.time()-week))
     renders = sorted(renders, key=lambda x:x['created'], reverse=True)
 
