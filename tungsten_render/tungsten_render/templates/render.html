@@ -58,7 +58,7 @@
 
             <div class="input-group">
                 <span class="input-group-addon" id="basic-addon1">Name/Label</span>
-                <input class="form-control" type="text" name="name" aria-describedby="basic-addon1" {% if resubmit %} value="{{old_item.message.name}}"{%endif%}/>
+                <input class="form-control" type="text" name="name" placeholder="Optional" aria-describedby="basic-addon1" {% if resubmit %} value="{{old_item.message.name}}"{%endif%}/>
             </div>
             <div class="input-group">
                 <span class="input-group-addon" id="basic-addon3">Render thumbnail</span>
@@ -67,11 +67,11 @@
             <div class="input-group">
                 <span class="input-group-addon" id="basic-addon2">Samples per pixel</span>
 
-                <input class="form-control" aria-describedby="basic-addon2" type="number" name="spp" min="1" max="256" {% if resubmit %} value="{{old_item.message.spp}}"{%endif%}/><br/>
+                <input class="form-control" aria-describedby="basic-addon2" type="number" name="spp" placeholder="Default is 256" min="1" max="2048" {% if resubmit %} value="{{old_item.message.spp}}"{%endif%}/><br/>
             </div>
             <div class="input-group">
                 <span class="input-group-addon" id="basic-addon4">Resolution</span>
-                <input class="form-control" aria-describedby="basic-addon4" type=text" name="resolution" {% if resubmit %} value="{{old_item.message.resolution}}"{%endif%}/><br/>
+                <input class="form-control" aria-describedby="basic-addon4" type=text" placeholder="1000x562" name="resolution" {% if resubmit and old_item.message.resolution %} value="{{old_item.message.resolution.0}}x{{old_item.message.resolution.1}}"{%endif%}/><br/>
             </div>
 
             <div class="input-group">
