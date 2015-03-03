@@ -35,14 +35,19 @@ ENC_ACCESS_KEY = b'\x9a\x98\x18\x16P\xdetGu@\xcd\xfb\xd1Iv\x83\x89\x8b?\x1d\xf3\
 ENC_SECRET_KEY = b'\xe9\xc5KJ\x94\xe7\x92\xb5`U\x1at\xf5\x8e\xd7~p\xf9\xa5\xc6\x98\x8bT\x0e*\xfe\x08\xe1\x86\x14\xa8\xaa\x83\x93\x8d\x98\x80\xa0\xf0\x88A\xf5G+(T\xa93T\x03\x87\xbd[x\xfc\x7f'
 
 class RenderManager(object):
+    MODES = ["BENCHMARK", "RENDER"]
 
     def __init__(self):
+        self.mode = "RENDER"
         if not ("AWS_ACCESS_KEY_ID" in os.environ and "AWS_SECRET_ACCESS_KEY" in os.environ):
             # try to decrypt AWS credentials via key in userdata
             for line in get_instance_userdata().splitlines():
                 if "AWSSECRET=" in line:
                     secret = line.strip().split("=")[1]
-                    break
+                if "MODE=" in line:
+                    mode = line.strip().split("=")[1]
+                    if mode in self.MODES:
+                        self.mode = mode
             else:
                 raise Exception("Please set your AWS credentials!")
             from Crypto.Cipher import AES
@@ -142,7 +147,13 @@ class RenderManager(object):
                     return True
             time.sleep(15)
 
+    def benchmark(self):
+        pass
+
+
     def run(self):
+        if self.mode == "BENCHMARK":
+            return self.benchmark()
 
         print("Waiting for a job...")
         while True:
