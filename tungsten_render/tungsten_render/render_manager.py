@@ -10,13 +10,14 @@ import uuid
 import shutil
 import traceback
 from urllib.request import urlopen
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 import datetime
 from pprint import pprint
 from io import BytesIO
 from decimal import Decimal
 
 import pytz
+import requests
 
 import boto
 import boto.sqs
@@ -168,12 +169,14 @@ class RenderManager(object):
                     self.q.delete_message(msg)
                     continue
                 print("Have message: %r" % data)
-                uid = uuid.UUID(data['uid']).hex
-                #if uid == '7096c1416b194898bb7b0834eb94951a':
+                _id = data['id']
+                #if _id == 1:
                 #    self.q.delete_message(msg)
                 #    continue
+                uid = data['uid']
 
-                item = self.get_db_item(uid)
+                aws_s3_root = "https://s3.amazonaws.com/tungsten-render/" + uid
+                do_root = "http://do.em32.net:8081/render/" + str(_id)
 
                 spp = data.get('spp', 64)
                 thumb = data.get('thumb')
@@ -182,8 +185,7 @@ class RenderManager(object):
                 resolution = data.get('resolution')
                 resubmit = data.get('resubmit')
 
-                item['status'] = 'building'
-                item.partial_save()
+                requests.put(do_root, json={"status": "building"})
 
 
                 if commit is not None and commit != "ANY":
@@ -195,10 +197,10 @@ class RenderManager(object):
                         if exe is None:
                             raise Exception("Failed to build")
                     except Exception as ex:
-                        item['status'] = "error"
-                        item['commit'] = commit 
-                        item['err_msg'] = repr(ex.args)
-                        item.partial_save()
+                        requests.put(do_root, json={"status": "errored",
+                            "commit": commit,
+                            "err_msg": repr(ex.args)})
+
                         self.q.delete_message(msg)
                         print("Error building, won't render")
                         continue
@@ -206,19 +208,17 @@ class RenderManager(object):
                     commit = self.mgr.get_latest_built_commit()
                     exe = self.mgr.get_exec(commit)
                     if exe is None:
-                        item['status'] = "error"
-                        item['commit'] = commit 
-                        item['err_msg'] = "Unable to find a working build of tungsten"
-                        item.partial_save()
+                        requests.put(do_root, json={"status": "errored",
+                            "commit": commit,
+                            "err_msg": "Unable to find a weorking build of tungsten"})
                         self.q.delete_message(msg)
                         print("Error building, won't render")
                         continue
 
 
+                requests.put(do_root, json={"status": "rendering",
+                    "commit": commit})
 
-                item['commit'] = commit 
-                item['status'] = 'inprogress'
-                item.partial_save()
 
                 try:
                     work_dir = tempfile.mkdtemp(prefix="tungsten")
@@ -228,7 +228,7 @@ class RenderManager(object):
 
                     # fetch the scene archive
                     if not uploaded_scene_doc:
-                        uploaded_scene_doc = "https://s3.amazonaws.com/tungsten-render/" + uid + ".zip"
+                        uploaded_scene_doc = aws_s3_root + ".zip"
                     handle = urlopen(uploaded_scene_doc)
                     shutil.copyfileobj(handle, open(downloaded_scene_zip, "w+b"))
                     print("Downloaded scene document")
@@ -262,11 +262,11 @@ class RenderManager(object):
                     # if thumb is set, render a small thumbnail that less than 128px
                     # with a fixed spp of 32
                     # note thumbnails never use the resume info
-                    if thumb:
+                    if True:
                         output_file = os.path.join(work_dir, "thumb.png")
                         scene_data['renderer']['output_file'] = output_file
                         scene_data['renderer']['overwrite_output_files'] = True
-                        scene_data['renderer']['spp'] = 32
+                        scene_data['renderer']['spp'] = 64
 
                         factor = max(res)/128.0
                         nres = [int(res[0]/factor), int(res[1]/factor)]
@@ -283,13 +283,12 @@ class RenderManager(object):
 
                         self.upload_to_s3(uid + ".thumb.png", file_name=output_file)
                         
-                        item['thumb'] = 'thumb.png'
-                        item.partial_save()
+                        requests.put(do_root, json={"thumb_url": aws_s3_root + ".thumb.png"})
 
 
                     if resubmit:
-                        old_resume_dat = "https://s3.amazonaws.com/tungsten-render/" + resubmit + ".resume.dat"
-                        old_resume_json = "https://s3.amazonaws.com/tungsten-render/" + resubmit + ".resume.json"
+                        old_resume_dat = "https://s3.amazonaws.com/tungsten-render/" + resubmit['uid'] + ".resume.dat"
+                        old_resume_json = "https://s3.amazonaws.com/tungsten-render/" + resubmit['uid'] + ".resume.json"
                         resume_dat = os.path.join(work_dir, uid + ".resume.dat")
                         resume_json = os.path.join(work_dir, uid + ".resume.json")
                         try:
@@ -297,6 +296,7 @@ class RenderManager(object):
                             shutil.copyfileobj(handle, open(resume_dat, "w+b"))
                             handle = urlopen(old_resume_json)
                             shutil.copyfileobj(handle, open(resume_json, "w+b"))
+                            print("Successfully downloaded resume info")
                         except HTTPError:
                             print("Failed to download resume information!")
 
@@ -321,43 +321,44 @@ class RenderManager(object):
                     p = subprocess.Popen([exe+"_server", "-p", "12345", "-l", logfile,
                         final_scene_file], cwd=work_dir)
                     print("tungsten_server started with pid %d" % p.pid)
+
+
                     render_start_time = time.time()
-                    item['render_start_time'] = Decimal(str(time.time()))
-                    item.partial_save()
-                    last_status_check = render_start_time
+                    time.sleep(1)
+                    last_status_check = 0
                     last_framegrab_time = render_start_time
                     last_checkpoint_time = render_start_time
+                    start_spp = None
                     while p.poll() is None:
                         time.sleep(5)
                         now = time.time()
                         try:
-                            if now - last_status_check > 30.0:
-                                render_status = json.loads(urlopen("http://localhost:12345/status").read().decode())
-                                item["render_status"] = render_status
-                                rate = float(render_status['current_spp']) / (now - render_start_time) # in samples per second
+                            if now - last_status_check > 15.0:
+                                render_status = requests.get("http://localhost:12345/status").json()
+                                if start_spp is None:
+                                    start_spp = render_status['current_spp']
+                                    continue
+                                rate = float(render_status['current_spp'] - start_spp) / (now - render_start_time) # in samples per second
                                 if rate > 0.0:
-                                    est_done_time = render_start_time + (float(render_status['total_spp']) / rate)
-                                    item['spprate'] = Decimal(str(rate))
-                                    item['est_done_time'] = Decimal(str(est_done_time))
-                                item.partial_save()
+                                    est_done_time = render_start_time + (float(render_status['total_spp'] - start_spp) / rate)
+                                    requests.put(do_root, json={"render_status": render_status, "spp_rate": rate,
+                                        "est_done_time": est_done_time, "start_spp": start_spp})
                                 last_status_check = now
-                            if now - last_framegrab_time > 180:
-                                with open(os.path.join(work_dir, "preview.png"), "wb") as fobj:
-                                    shutil.copyfileobj(urlopen("http://localhost:12345/render"), fobj)
-                                self.upload_to_s3(uid + ".preview.png", file_name=os.path.join(work_dir, "preview.png"))
-                                item["preview"] = "preview.png"
-                                item.partial_save()
+                            if now - last_framegrab_time > 300:
+                                print("Uploading frame to do_root")
+                                requests.post(do_root + "/preview.png", files={"file": urlopen("http://localhost:12345/render")})
                                 last_framegrab_time = now
-                                print("Uploaded frame to s3")
-                            if now - last_checkpoint_time > 600:
+                                print("Uploaded frame to do_root")
+                            if False and now - last_checkpoint_time > 600:
                                 if os.path.exists(restart_dat) and os.path.exists(restart_json):
                                     self.upload_to_s3(uid + ".resume.dat", file_name=restart_dat)
                                     self.upload_to_s3(uid + ".resume.json", file_name=restart_json)
                                     print("Uploaded resume data")
                                 last_checkpoint_time = now
-                        except HTTPError as ex:
+                        except URLError as ex:
                             traceback.print_exc()
                             # we might fail to urlopen if the render has finished
+                            time.sleep(1)
                             if p.poll() is None: # still running? this is a real error
                                 print("renderer is still running! but had HTTPError")
                                 raise ex
@@ -366,32 +367,31 @@ class RenderManager(object):
                     if p.wait() != 0:
                         print("Bad error code! %r" % p.returncode)
 
+                    requests.put(do_root, json={"status": "uploading"})
 
                     if os.path.exists(output_file):
+                        print("Uploading final scene to S3")
                         self.upload_to_s3(uid + ".png", file_name=output_file)
                     else:
-                        item['status'] = 'error'
-                        item['err_msg'] = open(logfile).read()
-                        item.partial_save()
+                        requests.put(do_root, json={"status": "errored",
+                            "err_msg": open(logfile).read()})
                         continue
 
 
                     if os.path.exists(restart_dat) and os.path.exists(restart_json):
+                        print("Uploading resume data to S3")
                         self.upload_to_s3(uid + ".resume.dat", file_name=restart_dat)
                         self.upload_to_s3(uid + ".resume.json", file_name=restart_json)
 
 
 
                     shutil.rmtree(work_dir)
-                    item['status'] = 'done'
-                    item['finished'] = Decimal(str(time.time()))
-                    item.partial_save()
-                    print("Result uploaded and work_dir deleted")
+                    requests.put(do_root, json={"status": "finished", "final_render_url": aws_s3_root + ".png"})
+                    print("Render is done!  Waiting for next item")
                 except Exception:
                     traceback.print_exc()
-                    item['status'] = 'error'
-                    item['finished'] = Decimal(str(time.time()))
-                    item.partial_save()
+                    requests.put(do_root, json={"status": "errored",
+                            "err_msg": traceback.format_exc()})
 
                 self.last_render = datetime.datetime.now(pytz.utc)
             if self.sleep():
