@@ -134,7 +134,7 @@ class RenderManager(object):
 
             since_last_render = now - self.last_render
             print("It's been %r seconds since last render" % since_last_render.total_seconds()) 
-            if since_last_render.total_seconds() > 1500: # 25 minutes 
+            if since_last_render.total_seconds() > 600: # 10 minutes 
                 remainder = running.total_seconds() % 3600.0
                 print("Remainder: %r" % remainder)
                 if remainder > 2700:
