@@ -49,8 +49,6 @@ class RenderManager(object):
                     mode = line.strip().split("=")[1]
                     if mode in self.MODES:
                         self.mode = mode
-            else:
-                raise Exception("Please set your AWS credentials!")
             from Crypto.Cipher import AES
             from Crypto import Random
             from hashlib import md5
@@ -144,7 +142,7 @@ class RenderManager(object):
                     iid = self.instance_metadata['instance-id']
                     self.sns_conn.publish("arn:aws:sns:us-east-1:324620253032:tungsten-ec2", subject="Shutting down " + iid, 
                         message="Shutting down this instance, since it's not processed a job in a while")
-                    self.ec2_conn.stop_instances(instance_ids=[iid])
+                    self.ec2_conn.terminate_instances(instance_ids=[iid])
                     return True
             time.sleep(15)
 
@@ -355,7 +353,7 @@ class RenderManager(object):
                                     self.upload_to_s3(uid + ".resume.json", file_name=restart_json)
                                     print("Uploaded resume data")
                                 last_checkpoint_time = now
-                        except URLError as ex:
+                        except Exception as ex:
                             traceback.print_exc()
                             # we might fail to urlopen if the render has finished
                             time.sleep(1)
