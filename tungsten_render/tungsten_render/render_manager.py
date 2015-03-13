@@ -327,6 +327,7 @@ class RenderManager(object):
                     last_framegrab_time = render_start_time
                     last_checkpoint_time = render_start_time
                     start_spp = None
+                    framegrab_interval = 30
                     while p.poll() is None:
                         time.sleep(5)
                         now = time.time()
@@ -339,13 +340,18 @@ class RenderManager(object):
                                 rate = float(render_status['current_spp'] - start_spp) / (now - render_start_time) # in samples per second
                                 if rate > 0.0:
                                     est_done_time = render_start_time + (float(render_status['total_spp'] - start_spp) / rate)
-                                    requests.put(do_root, json={"render_status": render_status, "spp_rate": rate,
-                                        "est_done_time": est_done_time, "start_spp": start_spp})
+                                    reply = requests.put(do_root, json={"render_status": render_status, "spp_rate": rate,
+                                        "est_done_time": est_done_time, "start_spp": start_spp}).json()
+                                    if reply and reply.get("requested_action") == "stop":
+                                        p.kill()
+                                        requests.put(do_root, json={"status": "errored",
+                                            "err_msg": "Cancel requested by user"})
                                 last_status_check = now
-                            if now - last_framegrab_time > 300:
+                            if now - last_framegrab_time > framegrab_interval:
                                 print("Uploading frame to do_root")
                                 requests.post(do_root + "/preview.png", files={"file": urlopen("http://localhost:12345/render")})
                                 last_framegrab_time = now
+                                framegrab_interval = min(framegrab_interval*1.4, 300)
                                 print("Uploaded frame to do_root")
                             if False and now - last_checkpoint_time > 600:
                                 if os.path.exists(restart_dat) and os.path.exists(restart_json):
